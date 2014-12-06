@@ -18,7 +18,7 @@ func (p *Principal) Configure(c ...Conf) error {
 func UseSession() Conf {
 	return func(p *Principal) error {
 		p.loaders = append(p.loaders, sessionloader)
-		p.handlers = append(p.handlers, p.sessionhandler)
+		p.handlers = append(p.handlers, sessionhandler)
 		return nil
 	}
 }

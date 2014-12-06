@@ -14,9 +14,10 @@ var (
 	n2 string      = "role:b"
 	n3 string      = "role:c"
 	n4 string      = "item:key:gold"
-	p0 *Permission = NewPermission(1, 2, 3, "four") // eh, use anything you want really, so long as its hashable in a map
-	p1 *Permission = NewPermission(n1, n2, n3)
-	p2 *Permission = NewPermission("role:a", n4)
+	p0 *Permission = NewPermission(1, 2, 3, "four")
+	p1 *Permission = NewPermission(n1, n2)
+	p2 *Permission = NewPermission(n3)
+	p3 *Permission = NewPermission("role:a", n4)
 )
 
 func PerformRequest(r http.Handler, method, path string) *httptest.ResponseRecorder {
@@ -65,8 +66,8 @@ func TestIdentity(t *testing.T) {
 		principal := p.(*Principal)
 		i := testidentity()
 		principal.IdentityChange(i)
-		identity = c.Session.Get("identity_id").(string)
 		c.ServeData(200, []byte("success"))
+		identity = c.Session.Get("identity_id").(string)
 	})
 	PerformRequest(f, "GET", "/identity")
 	if identity != "test" {
@@ -77,17 +78,20 @@ func TestIdentity(t *testing.T) {
 func TestPermission(t *testing.T) {
 	f := testapp("test-identity", testextension())
 	f.GET("/permission", func(c *flotilla.Ctx) {
-		//p, _ := c.Call("principal")
-		//principal := p.(*Principal)
-		//i := testidentity(n1, n2, n3)
-		//principal.IdentityChange(i)
-		//fmt.Printf("%t\n", p0.Allows(i))
-		//fmt.Printf("%t\n", p1.Allows(i))
-		//fmt.Printf("%t\n", p2.Allows(i))
-		//i = testidentity(n4)
-		//fmt.Printf("%t\n", p0.Allows(i))
-		//fmt.Printf("%t\n", p1.Allows(i))
-		//fmt.Printf("%t\n", p2.Allows(i))
+		p, _ := c.Call("principal")
+		principal := p.(*Principal)
+		i := testidentity(n1, n2)
+		principal.IdentityChange(i)
+		fmt.Printf("%+v %+v %t\n", p0, i, p0.Allows(i))
+		fmt.Printf("%+v %+v %t\n", p1, i, p1.Allows(i))
+		fmt.Printf("%+v %+v %t\n", p2, i, p2.Allows(i))
+		fmt.Printf("%+v %+v %t\n", p3, i, p3.Allows(i))
+		ii := testidentity(n4)
+		principal.IdentityChange(ii)
+		fmt.Printf("%+v %+v %t\n", p0, ii, p0.Allows(ii))
+		fmt.Printf("%+v %+v %t\n", p1, ii, p1.Allows(ii))
+		fmt.Printf("%+v %+v %t\n", p2, ii, p2.Allows(ii))
+		fmt.Printf("%+v %+v %t\n", p3, ii, p3.Allows(ii))
 		c.ServeData(200, []byte("success"))
 	})
 	PerformRequest(f, "GET", "/permission")
