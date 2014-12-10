@@ -1,10 +1,14 @@
 package principal
 
-type (
-	Conf func(*Principal) error
+import (
+	"github.com/thrisp/flotilla"
 )
 
-func (p *Principal) Configure(c ...Conf) error {
+type (
+	Conf func(*Manager) error
+)
+
+func (p *Manager) Configure(c ...Conf) error {
 	var err error
 	for _, fn := range c {
 		err = fn(p)
@@ -16,9 +20,30 @@ func (p *Principal) Configure(c ...Conf) error {
 }
 
 func UseSession() Conf {
-	return func(p *Principal) error {
+	return func(p *Manager) error {
 		p.loaders = append(p.loaders, sessionloader)
 		p.handlers = append(p.handlers, sessionhandler)
+		return nil
+	}
+}
+
+func IdentityLoad(fns ...IdentityLoader) Conf {
+	return func(p *Manager) error {
+		p.loaders = append(p.loaders, fns...)
+		return nil
+	}
+}
+
+func IdentityHandle(fns ...IdentityHandler) Conf {
+	return func(p *Manager) error {
+		p.handlers = append(p.handlers, fns...)
+		return nil
+	}
+}
+
+func Unauthorized(fn flotilla.HandlerFunc) Conf {
+	return func(p *Manager) error {
+		p.unauthorized = fn
 		return nil
 	}
 }

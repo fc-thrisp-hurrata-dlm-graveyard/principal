@@ -5,7 +5,15 @@ import (
 	set "gopkg.in/fatih/set.v0"
 )
 
+var (
+	Anonymous = NewIdentity("anonymous", "anonymous")
+)
+
 type (
+	IdentityLoader func(*flotilla.Ctx) *Identity
+
+	IdentityHandler func(*Identity, *flotilla.Ctx)
+
 	Permission struct {
 		Needs *set.Set
 		//Excludes *set.Set
@@ -16,75 +24,91 @@ type (
 		Provides *set.Set
 	}
 
-	Principal struct {
-		c            *flotilla.Ctx
-		loaders      []func(*flotilla.Ctx) *Identity
-		handlers     []func(*Identity, *flotilla.Ctx)
+	Manager struct {
+		ctx          *flotilla.Ctx
+		loaders      []IdentityLoader
+		handlers     []IdentityHandler
 		unauthorized flotilla.HandlerFunc
 	}
 )
 
-func New(c ...Conf) *Principal {
-	p := &Principal{}
+func New(c ...Conf) *Manager {
+	p := &Manager{}
+	c = append(c, IdentityHandle(defaulthandler))
 	p.Configure(c...)
 	return p
 }
 
-func (p *Principal) Init(app *flotilla.App) {
-	app.Configuration = append(app.Configuration, flotilla.CtxFuncs(ctxfuncs(p)))
-	app.UseAt(0, p.OnRequest)
+func (m *Manager) Init(app *flotilla.App) {
+	app.Configuration = append(app.Configuration, flotilla.CtxFuncs(ctxfuncs(m)))
+	app.UseAt(0, m.OnRequest)
 }
 
-func ctxfuncs(p *Principal) map[string]interface{} {
+func ctxfuncs(m *Manager) map[string]interface{} {
 	ret := make(map[string]interface{})
-	ret["principal"] = func() *Principal { return p }
+	ret["principal"] = func() *Manager { return m }
 	ret["currentidentity"] = func(c *flotilla.Ctx) *Identity { return currentidentity(c) }
 	return ret
 }
 
-func (p *Principal) IdentityChange(i *Identity) {
-	p.HandleIdentity(i)
+func (m *Manager) Change(i *Identity) {
+	m.Handle(i)
 }
 
 func sessionloader(c *flotilla.Ctx) *Identity {
-	identity := &Identity{}
 	if iid := c.Session.Get("identity_id"); iid != nil {
-		identity.Id = iid.(string)
+		id := iid.(string)
+		return NewIdentity(id, id)
 	}
+	return Anonymous
+}
+
+func (m *Manager) LoadIdentity(c *flotilla.Ctx) *Identity {
+	identity := Anonymous
+	for _, loader := range m.loaders {
+		identity = loader(c)
+	}
+	m.Handle(identity)
 	return identity
 }
 
-func (p *Principal) LoadIdentity(c *flotilla.Ctx) *Identity {
-	ret := &Identity{}
-	for _, loader := range p.loaders {
-		ret = loader(c)
-	}
-	p.HandleIdentity(ret)
-	return ret
+func defaulthandler(i *Identity, c *flotilla.Ctx) {
+	c.Set("identity", i)
 }
 
 func sessionhandler(i *Identity, c *flotilla.Ctx) {
 	c.Session.Set("identity_id", i.Id)
 }
 
-func (p *Principal) HandleIdentity(i *Identity) {
-	for _, h := range p.handlers {
-		h(i, p.c)
+func (m *Manager) Handle(i *Identity) {
+	for _, h := range m.handlers {
+		h(i, m.ctx)
 	}
-	p.c.Set("identity", i)
 }
 
-func (p *Principal) OnRequest(c *flotilla.Ctx) {
-	p.c = c
-	p.LoadIdentity(c)
+func (m *Manager) OnRequest(c *flotilla.Ctx) {
+	m.ctx = c
+	m.LoadIdentity(c)
+}
+
+func (m *Manager) Unauthorized(c *flotilla.Ctx) {
+	if m.unauthorized != nil {
+		m.unauthorized(c)
+	} else {
+		c.Status(401)
+	}
 }
 
 func NewPermission(needs ...interface{}) *Permission {
 	return &Permission{Needs: set.New(needs...)}
 }
 
+func (p *Permission) Add(needs ...interface{}) {
+	p.Needs.Add(needs...)
+}
+
 // Allows checks the intersection of the permissions needs and the identity provides.
-// Returns true is the intersection is not empty.
+// Returns true if the intersection is not empty.
 func (p *Permission) Allows(i *Identity) bool {
 	return !set.Intersection(p.Needs, i.Provides).IsEmpty()
 }
@@ -96,6 +120,7 @@ func (p *Permission) Requires(i *Identity) bool {
 }
 
 func NewIdentity(id string, provides ...interface{}) *Identity {
+	provides = append(provides, "anonymous")
 	return &Identity{Id: id, Provides: set.New(provides...)}
 }
 
@@ -107,16 +132,25 @@ func (i *Identity) Must(p *Permission) bool {
 	return p.Requires(i)
 }
 
+func (i *Identity) Add(provides ...interface{}) {
+	i.Provides.Add(provides...)
+}
+
 func currentidentity(c *flotilla.Ctx) *Identity {
 	if identity := c.Data["identity"]; identity != nil {
 		return identity.(*Identity)
 	}
-	return &Identity{}
+	return Anonymous
 }
 
-// SufficientAuthorization wraps a flotilla HandlerFunc with permissions, allowing
+func manager(c *flotilla.Ctx) *Manager {
+	p, _ := c.Call("principal")
+	return p.(*Manager)
+}
+
+// Sufficient wraps a flotilla HandlerFunc with permissions, allowing
 // access to the handler if the current identity is allowed for any given permission.
-func SufficientAuthorization(h flotilla.HandlerFunc, perms ...*Permission) flotilla.HandlerFunc {
+func Sufficient(h flotilla.HandlerFunc, perms ...*Permission) flotilla.HandlerFunc {
 	return func(c *flotilla.Ctx) {
 		identity := currentidentity(c)
 		permitted := false
@@ -127,33 +161,21 @@ func SufficientAuthorization(h flotilla.HandlerFunc, perms ...*Permission) floti
 			}
 		}
 		if !permitted {
-			p, _ := c.Call("principal")
-			principal := p.(*Principal)
-			if principal.unauthorized != nil {
-				principal.unauthorized(c)
-			} else {
-				c.Status(401)
-			}
+			manager(c).Unauthorized(c)
 		}
 	}
 }
 
-// NecessaryAuthorization wraps a flotilla HandlerFunc with permissions, requiring
+// Necessary wraps a flotilla HandlerFunc with permissions, requiring
 // that the current identity satifies all permissions fully before accessing the HandlerFunc.
-func NecessaryAuthorization(h flotilla.HandlerFunc, perms ...*Permission) flotilla.HandlerFunc {
+func Necessary(h flotilla.HandlerFunc, permissions ...*Permission) flotilla.HandlerFunc {
 	return func(c *flotilla.Ctx) {
 		identity := currentidentity(c)
 		permitted := true
-		for _, p := range perms {
-			if !p.Requires(identity) {
+		for _, permission := range permissions {
+			if !permission.Requires(identity) {
 				permitted = false
-				p, _ := c.Call("principal")
-				principal := p.(*Principal)
-				if principal.unauthorized != nil {
-					principal.unauthorized(c)
-				} else {
-					c.Status(401)
-				}
+				manager(c).Unauthorized(c)
 			}
 		}
 		if permitted {
