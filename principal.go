@@ -15,8 +15,8 @@ type (
 	IdentityHandler func(*Identity, *flotilla.Ctx)
 
 	Permission struct {
-		Needs *set.Set
-		//Excludes *set.Set
+		Needs    *set.Set
+		Excludes *set.Set
 	}
 
 	Identity struct {
@@ -28,7 +28,7 @@ type (
 		ctx          *flotilla.Ctx
 		loaders      []IdentityLoader
 		handlers     []IdentityHandler
-		unauthorized flotilla.HandlerFunc
+		unauthorized flotilla.Manage
 	}
 )
 
@@ -40,11 +40,11 @@ func New(c ...Conf) *Manager {
 }
 
 func (m *Manager) Init(app *flotilla.App) {
-	app.Configuration = append(app.Configuration, flotilla.CtxFuncs(ctxfuncs(m)))
+	app.Configuration = append(app.Configuration, flotilla.Extensions(extensions(m)))
 	app.UseAt(0, m.OnRequest)
 }
 
-func ctxfuncs(m *Manager) map[string]interface{} {
+func extensions(m *Manager) map[string]interface{} {
 	ret := make(map[string]interface{})
 	ret["principal"] = func() *Manager { return m }
 	ret["currentidentity"] = func(c *flotilla.Ctx) *Identity { return currentidentity(c) }
@@ -103,8 +103,12 @@ func NewPermission(needs ...interface{}) *Permission {
 	return &Permission{Needs: set.New(needs...)}
 }
 
-func (p *Permission) Add(needs ...interface{}) {
+func (p *Permission) Need(needs ...interface{}) {
 	p.Needs.Add(needs...)
+}
+
+func (p *Permission) Exclude(excludes ...interface{}) {
+	p.Excludes.Add(excludes...)
 }
 
 // Allows checks the intersection of the permissions needs and the identity provides.
@@ -150,7 +154,7 @@ func manager(c *flotilla.Ctx) *Manager {
 
 // Sufficient wraps a flotilla HandlerFunc with permissions, allowing
 // access to the handler if the current identity is allowed for any given permission.
-func Sufficient(h flotilla.HandlerFunc, perms ...*Permission) flotilla.HandlerFunc {
+func Sufficient(h flotilla.Manage, perms ...*Permission) flotilla.Manage {
 	return func(c *flotilla.Ctx) {
 		identity := currentidentity(c)
 		permitted := false
@@ -168,7 +172,7 @@ func Sufficient(h flotilla.HandlerFunc, perms ...*Permission) flotilla.HandlerFu
 
 // Necessary wraps a flotilla HandlerFunc with permissions, requiring
 // that the current identity satifies all permissions fully before accessing the HandlerFunc.
-func Necessary(h flotilla.HandlerFunc, permissions ...*Permission) flotilla.HandlerFunc {
+func Necessary(h flotilla.Manage, permissions ...*Permission) flotilla.Manage {
 	return func(c *flotilla.Ctx) {
 		identity := currentidentity(c)
 		permitted := true

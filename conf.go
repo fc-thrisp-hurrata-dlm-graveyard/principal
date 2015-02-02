@@ -41,7 +41,7 @@ func IdentityHandle(fns ...IdentityHandler) Conf {
 	}
 }
 
-func Unauthorized(fn flotilla.HandlerFunc) Conf {
+func Unauthorized(fn flotilla.Manage) Conf {
 	return func(p *Manager) error {
 		p.unauthorized = fn
 		return nil
