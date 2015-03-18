@@ -51,12 +51,12 @@ func testidentity(p ...interface{}) *Identity {
 func TestExtension(t *testing.T) {
 	exists := false
 	f := testapp("test-extension", testextension(""))
-	f.GET("/test", func(c *flotilla.Ctx) {
+	f.GET("/test", func(c flotilla.Ctx) {
 		p, _ := c.Call("principal")
 		if _, ok := p.(*Manager); ok {
 			exists = true
 		}
-		c.ServePlain(200, []byte("success"))
+		c.Call("serveplain", 200, []byte("success"))
 	})
 	PerformRequest(f, "GET", "/test")
 	if !exists {
@@ -67,10 +67,11 @@ func TestExtension(t *testing.T) {
 func TestIdentity(t *testing.T) {
 	identity := ""
 	f := testapp("test-identity", testextension(""))
-	f.GET("/identity", func(c *flotilla.Ctx) {
+	f.GET("/identity", func(c flotilla.Ctx) {
 		manager(c).Change(testidentity())
-		c.ServePlain(200, []byte("success"))
-		identity = c.Session.Get("identity_id").(string)
+		c.Call("serveplain", 200, []byte("success"))
+		idty, _ := c.Call("getsession", "identity_id")
+		identity = idty.(string)
 	})
 	PerformRequest(f, "GET", "/identity")
 	if identity != "test" {
@@ -97,7 +98,7 @@ func testrequire(t *testing.T, test string, i *Identity, expected bool, permissi
 }
 
 func needhandler(t *testing.T, test string, kind string, i *Identity, expected bool, permissions ...*Permission) flotilla.Manage {
-	return func(c *flotilla.Ctx) {
+	return func(c flotilla.Ctx) {
 		p := manager(c)
 		p.Change(i)
 		switch kind {
@@ -106,7 +107,7 @@ func needhandler(t *testing.T, test string, kind string, i *Identity, expected b
 		case "require":
 			testrequire(t, test, i, expected, permissions...)
 		}
-		c.ServePlain(200, []byte("success"))
+		c.Call("serveplain", 200, []byte("success"))
 	}
 }
 
